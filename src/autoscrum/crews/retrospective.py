@@ -36,7 +36,7 @@ def build_retrospective_crew(
     reflect = Task(
         description=(
             f"Sprint {sprint_number}: {completed_points}/{planned_points} points done.\n"
-            "List 1-2 things that went well and 1-2 things to improve."
+            "Reflect on the sprint. What went well? What should improve?"
         ),
         expected_output="What went well and what to improve.",
         agent=developer,
@@ -44,8 +44,8 @@ def build_retrospective_crew(
 
     summarise = Task(
         description=(
-            "Summarise the retrospective. List what went well, what needs improvement, "
-            "and 1-2 concrete action items for the next sprint."
+            "Summarise the retrospective. Capture what went well, what needs "
+            "improvement, and concrete action items for the next sprint."
         ),
         expected_output="Retrospective summary with action items.",
         agent=scrum_master,

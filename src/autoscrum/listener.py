@@ -1,9 +1,10 @@
-"""CrewAI event listener that bridges agent/task/crew events into the Rich display."""
+"""CrewAI event listener and litellm stream capture for the Rich display."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import litellm
 from crewai.events import BaseEventListener
 from crewai.events import (
     AgentExecutionCompletedEvent,
@@ -20,6 +21,65 @@ from crewai.events import (
 
 if TYPE_CHECKING:
     from .display import ScrumDisplay
+
+
+def install_stream_capture(display: ScrumDisplay) -> None:
+    """Wrap ``litellm.completion`` and ``litellm.acompletion`` to capture
+    streaming chunks.
+
+    CrewAI replaces ``litellm.callbacks`` during crew setup, so the standard
+    CustomLogger approach does not work.  Instead we wrap the completion
+    functions themselves and intercept the generator/async-generator when
+    ``stream=True``.  Both ``delta.content`` and ``delta.reasoning_content``
+    are forwarded to the display's rolling buffer.
+
+    The sync path is used by ``Crew.kickoff()`` and the async path by
+    ``Crew.akickoff()`` (sprint execution).
+    """
+
+    def _extract(chunk):
+        try:
+            delta = chunk.choices[0].delta
+            text = getattr(delta, "content", None) or ""
+            reasoning = getattr(delta, "reasoning_content", None) or ""
+            if reasoning:
+                display.append_llm_chunk(reasoning)
+            if text:
+                display.append_llm_chunk(text)
+        except Exception:
+            pass
+
+    _orig_sync = litellm.completion
+
+    def _patched_sync(*args, **kwargs):
+        result = _orig_sync(*args, **kwargs)
+        if not kwargs.get("stream"):
+            return result
+
+        def _tap(gen):
+            for chunk in gen:
+                _extract(chunk)
+                yield chunk
+
+        return _tap(result)
+
+    litellm.completion = _patched_sync
+
+    _orig_async = litellm.acompletion
+
+    async def _patched_async(*args, **kwargs):
+        result = await _orig_async(*args, **kwargs)
+        if not kwargs.get("stream"):
+            return result
+
+        async def _atap(agen):
+            async for chunk in agen:
+                _extract(chunk)
+                yield chunk
+
+        return _atap(result)
+
+    litellm.acompletion = _patched_async
 
 
 class ScrumEventListener(BaseEventListener):
@@ -88,10 +148,15 @@ class ScrumEventListener(BaseEventListener):
             d = display._display
             if d:
                 d.bump_llm_calls()
+                role = getattr(event, "agent_role", None) or "Agent"
+                model = getattr(event, "model", None) or ""
+                d.begin_llm_call(role, model)
 
         @crewai_event_bus.on(LLMCallCompletedEvent)
         def _on_llm_done(source, event):
-            pass
+            d = display._display
+            if d:
+                d.finish_llm_call()
 
         @crewai_event_bus.on(ToolUsageStartedEvent)
         def _on_tool_start(source, event):

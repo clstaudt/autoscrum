@@ -30,13 +30,14 @@ def build_decompose_crew(
     decompose = Task(
         description=(
             f"Project goal: {project_goal}\n\n"
-            "Create exactly 3 user stories. For each provide:\n"
+            "Decompose this goal into user stories. Each story should be small "
+            "enough to implement in a single sprint. For each provide:\n"
             "- title: short name\n"
-            "- description: one sentence\n"
-            "- acceptance_criteria: list of 2 short criteria\n"
+            "- description: what the user needs and why\n"
+            "- acceptance_criteria: concrete, testable conditions for done\n\n"
             "Set id to empty string, story_points to 0, status to 'backlog'."
         ),
-        expected_output="3 user stories with title, description, and acceptance_criteria.",
+        expected_output="User stories with title, description, and acceptance_criteria.",
         agent=product_owner,
         output_pydantic=BacklogOutput,
     )

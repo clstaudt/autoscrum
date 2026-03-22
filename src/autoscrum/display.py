@@ -37,6 +37,7 @@ _COLUMN_HEADER = {
 }
 
 MAX_ACTIVITY_LINES = 14
+MAX_LLM_OUTPUT_LINES = 20
 
 
 class ScrumDisplay:
@@ -59,6 +60,10 @@ class ScrumDisplay:
         self._working_role: str | None = None
         self._working_since: float | None = None
         self._llm_calls: int = 0
+        self._llm_role: str = ""
+        self._llm_model: str = ""
+        self._llm_buf: str = ""
+        self._llm_lines: deque[str] = deque(maxlen=MAX_LLM_OUTPUT_LINES)
         self._refresh_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
 
@@ -152,6 +157,32 @@ class ScrumDisplay:
         with self._lock:
             self._llm_calls += 1
 
+    def begin_llm_call(self, role: str, model: str) -> None:
+        """Signal that a new LLM call has started; flush current buffer line."""
+        with self._lock:
+            if self._llm_buf:
+                self._llm_lines.append(self._llm_buf)
+                self._llm_buf = ""
+            self._llm_role = role
+            self._llm_model = model
+            short = model.rsplit("/", 1)[-1] if model else "…"
+            self._llm_lines.append(f"[dim]── {role} → {short} ──[/dim]")
+
+    def append_llm_chunk(self, text: str) -> None:
+        """Append a streaming token chunk to the rolling LLM output."""
+        with self._lock:
+            self._llm_buf += text
+            while "\n" in self._llm_buf:
+                line, self._llm_buf = self._llm_buf.split("\n", 1)
+                self._llm_lines.append(line)
+
+    def finish_llm_call(self) -> None:
+        """Flush remaining buffer after an LLM call completes."""
+        with self._lock:
+            if self._llm_buf:
+                self._llm_lines.append(self._llm_buf)
+                self._llm_buf = ""
+
     # -- internals -----------------------------------------------------------
 
     def _log(self, line: str) -> None:
@@ -185,9 +216,15 @@ class ScrumDisplay:
             Layout(name="footer", ratio=3, minimum_size=8),
         )
 
+        layout["footer"].split_row(
+            Layout(name="activity", ratio=3),
+            Layout(name="llm_output", ratio=2),
+        )
+
         layout["header"].update(self._render_header())
         layout["board"].update(self._render_board())
-        layout["footer"].update(self._render_activity())
+        layout["footer"]["activity"].update(self._render_activity())
+        layout["footer"]["llm_output"].update(self._render_llm_output())
 
         return Panel(
             layout,
@@ -290,6 +327,26 @@ class ScrumDisplay:
         return Panel(
             content,
             title="[bold]Activity[/bold]",
+            border_style="dim",
+        )
+
+    def _render_llm_output(self) -> Panel:
+        """Render a rolling-window panel of streamed LLM tokens."""
+        with self._lock:
+            lines = list(self._llm_lines)
+            partial = self._llm_buf
+
+        if not lines and not partial:
+            content: RenderableType = Text("Waiting for LLM…", style="dim")
+        else:
+            visible = "\n".join(lines)
+            if partial:
+                visible = f"{visible}\n{partial}" if visible else partial
+            content = Text.from_markup(visible)
+
+        return Panel(
+            content,
+            title="[bold]LLM Output[/bold]",
             border_style="dim",
         )
 

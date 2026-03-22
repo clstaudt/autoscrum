@@ -13,7 +13,7 @@ from rich.console import Console
 from .config import load_team_config
 from .display import ScrumDisplay
 from .flow import LLMConnectionError, ScrumFlow
-from .listener import ScrumEventListener
+from .listener import ScrumEventListener, install_stream_capture
 from .preflight import preflight_check
 
 app = typer.Typer(
@@ -35,9 +35,12 @@ def _silence_crewai_console() -> None:
 @app.command()
 def run(
     goal: Annotated[str, typer.Argument(help="What to build, in plain English.")],
-    output_dir: Annotated[Path, typer.Option(help="Directory for product deliverables.")] = Path("product"),
+    output_dir: Annotated[
+        str,
+        typer.Option(help="Directory for product deliverables. Auto-generated under products/ if omitted."),
+    ] = "",
     team_config: Annotated[Path, typer.Option(help="Path to team YAML config file.")] = Path("team.yaml"),
-    sprint_duration: Annotated[int, typer.Option(help="Sprint time-box in seconds.")] = 300,
+    sprint_duration: Annotated[int, typer.Option(help="Sprint time-box in minutes.")] = 5,
     max_sprints: Annotated[int, typer.Option(help="Number of sprints to run.")] = 3,
     initial_velocity: Annotated[int, typer.Option(help="Story points for sprint 1 (adjusts empirically).")] = 13,
     no_code_execution: Annotated[bool, typer.Option("--no-code-execution", help="Disable running code via Docker during testing and review.")] = False,
@@ -60,6 +63,7 @@ def run(
 
     display = ScrumDisplay()
     _listener = ScrumEventListener(display=display)
+    install_stream_capture(display)
 
     flow = ScrumFlow(display=display)
     flow._team_config_path = str(team_config)
@@ -69,10 +73,10 @@ def run(
         flow.kickoff(
             inputs={
                 "project_goal": goal,
-                "sprint_duration_seconds": sprint_duration,
+                "sprint_duration_seconds": sprint_duration * 60,
                 "max_sprints": max_sprints,
                 "velocity": initial_velocity,
-                "output_dir": str(output_dir),
+                "output_dir": output_dir,
                 "enable_code_execution": not no_code_execution,
             }
         )

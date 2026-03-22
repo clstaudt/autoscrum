@@ -70,11 +70,10 @@ def build_execution_crew(
             "Use the directory read tool to see what already exists in the codebase.\n"
             "Then use the file writer tool to create or update files for each story.\n"
             f"All files MUST be written inside the '{output_dir}/' directory.\n\n"
-            "IMPORTANT: You MUST use the file writer tool for each story. "
+            "IMPORTANT: You MUST use the file writer tool to produce working code. "
             "Do NOT just describe code — actually write it.\n\n"
             f"Example: File Writer Tool(filename='todo.py', directory='{output_dir}', "
-            "content='print(\"hello\")', overwrite='true')\n\n"
-            "Write one file per story at minimum."
+            "content='print(\"hello\")', overwrite='true')"
         ),
         expected_output="A list of files written (one per story minimum).",
         agent=developer,

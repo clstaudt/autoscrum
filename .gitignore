@@ -9,5 +9,6 @@ build/
 .venv/
 venv/
 product/
+products/
 *.log
 .DS_Store

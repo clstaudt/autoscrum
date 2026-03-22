@@ -18,14 +18,16 @@ class AgentConfig(BaseModel):
     def create_llm(self) -> object:
         """Return a CrewAI-compatible LLM value.
 
-        Plain model string when no base_url is set; a ``crewai.LLM`` instance
-        configured with the custom endpoint otherwise.
+        Always returns a ``crewai.LLM`` with ``stream=True`` so the display
+        can show tokens as they arrive.  When *base_url* is set the custom
+        endpoint is wired in as well.
         """
-        if self.base_url:
-            from crewai import LLM
+        from crewai import LLM
 
-            return LLM(model=self.llm, base_url=self.base_url)
-        return self.llm
+        kwargs: dict = {"model": self.llm, "stream": True}
+        if self.base_url:
+            kwargs["base_url"] = self.base_url
+        return LLM(**kwargs)
 
 
 class TeamConfig(BaseModel):
@@ -74,7 +76,7 @@ class ScrumState(BaseModel):
     velocity: int = 13
     max_sprints: int = 3
     sprint_duration_seconds: int = 300
-    output_dir: str = "product"
+    output_dir: str = ""
     enable_code_execution: bool = True
     retro_action_items: list[str] = Field(default_factory=list)
 

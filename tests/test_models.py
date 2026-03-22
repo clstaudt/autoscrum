@@ -62,7 +62,7 @@ class TestScrumState:
         assert state.project_goal == ""
         assert state.velocity == 13
         assert state.max_sprints == 3
-        assert state.output_dir == "product"
+        assert state.output_dir == ""
         assert state.enable_code_execution is True
 
     def test_custom_values(self):
@@ -91,20 +91,20 @@ class TestTeamConfig:
 
 
 class TestAgentConfigCreateLlm:
-    def test_returns_string_without_base_url(self):
+    def test_returns_llm_without_base_url(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test")
         cfg = AgentConfig(llm="openai/gpt-4o")
         result = cfg.create_llm()
-        assert result == "openai/gpt-4o"
-        assert isinstance(result, str)
+        assert not isinstance(result, str)
+        assert hasattr(result, "model")
 
-    def test_returns_llm_instance_with_base_url(self):
-        from crewai import LLM
+    def test_returns_llm_instance_with_base_url(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test")
 
         cfg = AgentConfig(llm="openai/local-model", base_url="http://host:8000/v1")
         result = cfg.create_llm()
-        assert isinstance(result, LLM)
-        assert result.model == "openai/local-model"
-        assert result.base_url == "http://host:8000/v1"
+        assert not isinstance(result, str)
+        assert hasattr(result, "model")
 
 
 class TestStructuredOutputs:

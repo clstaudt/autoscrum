@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+from pathlib import Path
 from typing import TypeVar
 
 from crewai import Crew
 from crewai.flow.flow import Flow, listen, router, start
+from litellm import completion as litellm_completion
 from litellm.exceptions import (
     APIConnectionError,
     AuthenticationError,
@@ -100,6 +103,76 @@ def _select_by_velocity(ordered: list[UserStory], velocity: int) -> list[UserSto
             selected.append(s)
             pts += s.story_points
     return selected
+
+
+_PRODUCTS_ROOT = Path("products")
+
+
+def _sanitize_slug(raw: str) -> str:
+    """Turn an arbitrary string into a clean filesystem slug."""
+    slug = raw.strip().strip("`\"'").lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", slug)
+    slug = slug.strip("-")[:60]
+    return slug or "project"
+
+
+_SLUG_RE = re.compile(r"[a-z][a-z0-9-]{2,40}")
+
+
+def _extract_slug(text: str) -> str | None:
+    """Pull the best slug candidate out of potentially verbose LLM output."""
+    for line in reversed(text.strip().splitlines()):
+        cleaned = line.strip().strip("`\"'* ").lower()
+        m = _SLUG_RE.search(cleaned)
+        if m and "-" in m.group():
+            return m.group()
+    return None
+
+
+def _generate_project_slug(
+    goal: str,
+    stories: list[UserStory],
+    cfg: "AgentConfig",
+) -> str:
+    """Ask the LLM for a short directory name informed by the refined stories."""
+    from .models import AgentConfig  # noqa: F811 – local to avoid circular at module level
+
+    story_summary = "\n".join(f"- {s.title}: {s.description}" for s in stories)
+    kwargs: dict = {
+        "model": cfg.llm,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are a project naming assistant. Output ONLY a "
+                    "hyphen-separated directory name, 2-4 lowercase words. "
+                    "No explanation, no reasoning, no thinking."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Name this project: {goal}\n\n"
+                    f"Stories:\n{story_summary}"
+                ),
+            },
+        ],
+        "max_tokens": 200,
+        "temperature": 0.3,
+    }
+    if cfg.base_url:
+        kwargs["base_url"] = cfg.base_url
+
+    try:
+        result = litellm_completion(**kwargs)
+        raw = result.choices[0].message.content or ""
+        slug = _extract_slug(raw) or _sanitize_slug(raw)
+        if slug:
+            return slug
+    except Exception:
+        pass
+
+    return _sanitize_slug(goal)[:40] or "project"
 
 
 def _fallback_stories(project_goal: str) -> list[UserStory]:
@@ -214,6 +287,29 @@ class ScrumFlow(Flow[ScrumState]):
         return self.state.product_backlog
 
     @listen(refine_backlog)
+    def name_project(self, _=None):
+        """Derive a project directory name from the refined backlog."""
+        if self.state.output_dir:
+            Path(self.state.output_dir).mkdir(parents=True, exist_ok=True)
+            self.display.log_activity(
+                "Scrum Master", f"Output directory: [bold]{self.state.output_dir}/[/bold]"
+            )
+            return
+
+        self.display.log_activity("Scrum Master", "Naming project…")
+        slug = _generate_project_slug(
+            self.state.project_goal,
+            self.state.product_backlog,
+            self.team.product_owner,
+        )
+        output_dir = _PRODUCTS_ROOT / slug
+        output_dir.mkdir(parents=True, exist_ok=True)
+        self.state.output_dir = str(output_dir)
+        self.display.log_activity(
+            "Scrum Master", f"Output directory: [bold]{output_dir}/[/bold]"
+        )
+
+    @listen(name_project)
     def plan_sprint(self, _=None):
         """Ceremony 2: Sprint Planning — select stories for the sprint."""
         self.state.sprint_number += 1
