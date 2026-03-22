@@ -1,0 +1,13 @@
+# Test configuration using local Ollama qwen3.5:2b
+product_owner:
+  llm: ollama/qwen3.5:2b
+
+scrum_master:
+  llm: ollama/qwen3.5:2b
+
+developer:
+  llm: ollama/qwen3.5:2b
+  count: 1
+
+qa_engineer:
+  llm: ollama/qwen3.5:2b
