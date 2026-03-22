@@ -239,6 +239,11 @@ class ScrumFlow(Flow[ScrumState]):
             return []
 
         self.display.set_ceremony("Sprint Execution")
+        if self.state.enable_code_execution:
+            self.display.log_activity(
+                "Scrum Master",
+                "Code execution enabled — agents will run and test code via Docker",
+            )
         self.display.start_timer(self.state.sprint_duration_seconds)
 
         for s in sprint.stories:
@@ -250,6 +255,7 @@ class ScrumFlow(Flow[ScrumState]):
             sprint_number=sprint.number,
             team=self.team,
             output_dir=self.state.output_dir,
+            enable_code_execution=self.state.enable_code_execution,
         )
 
         try:
@@ -310,6 +316,8 @@ class ScrumFlow(Flow[ScrumState]):
             stories=review_stories,
             sprint_number=sprint.number,
             team=self.team,
+            output_dir=self.state.output_dir,
+            enable_code_execution=self.state.enable_code_execution,
         )
         result = _safe_kickoff(crew)
 

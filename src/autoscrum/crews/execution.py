@@ -1,4 +1,4 @@
-"""Sprint Execution Crew: implement stories within the time box."""
+"""Sprint Execution Crew: implement, test, and verify stories within the time box."""
 
 from __future__ import annotations
 
@@ -15,8 +15,9 @@ def build_execution_crew(
     sprint_number: int,
     team: TeamConfig,
     output_dir: str = "output",
+    enable_code_execution: bool = True,
 ) -> Crew:
-    """Build a crew that implements *stories* for the sprint."""
+    """Build a crew that implements, tests, and verifies *stories* for the sprint."""
     dev_cfg = team.developer
     qa_cfg = team.qa_engineer
 
@@ -24,21 +25,35 @@ def build_execution_crew(
     reader = FileReadTool()
     explorer = DirectoryReadTool(directory=output_dir)
 
+    dev_tools = [writer, reader, explorer]
+    qa_tools = [reader, explorer]
+
+    if enable_code_execution:
+        from crewai_tools import CodeInterpreterTool
+
+        code_runner = CodeInterpreterTool()
+        dev_tools.append(code_runner)
+        qa_tools.append(code_runner)
+
     developer = Agent(
         role="Developer",
-        goal="Implement user stories by writing code to disk.",
-        backstory=dev_cfg.backstory or "Pragmatic Developer who writes clean code.",
+        goal="Implement user stories by writing working, tested code to disk.",
+        backstory=dev_cfg.backstory or "Pragmatic Developer who writes clean, tested code.",
         llm=dev_cfg.llm,
-        tools=[writer, reader, explorer],
+        tools=dev_tools,
         verbose=False,
     )
 
     qa_engineer = Agent(
         role="QA Engineer",
-        goal="Verify code meets acceptance criteria by reading the written files.",
-        backstory=qa_cfg.backstory or "Thorough QA Engineer.",
+        goal=(
+            "Verify code meets acceptance criteria by reading the written files"
+            + (" and executing them" if enable_code_execution else "")
+            + "."
+        ),
+        backstory=qa_cfg.backstory or "Thorough QA Engineer who validates through testing.",
         llm=qa_cfg.llm,
-        tools=[reader, explorer],
+        tools=qa_tools,
         verbose=False,
     )
 
@@ -48,6 +63,7 @@ def build_execution_crew(
         indent=2,
     )
 
+    # -- Task 1: Implement -------------------------------------------------------
     implement = Task(
         description=(
             f"Sprint {sprint_number} — implement these stories:\n{stories_json}\n\n"
@@ -64,22 +80,57 @@ def build_execution_crew(
         agent=developer,
     )
 
+    tasks = [implement]
+
+    # -- Task 2: Test (when code execution is enabled) ---------------------------
+    if enable_code_execution:
+        test = Task(
+            description=(
+                "Run every file produced in the implementation step to verify it "
+                "executes without errors.\n\n"
+                "For each file:\n"
+                "1. Read its content with the file read tool.\n"
+                "2. Execute it with the Code Interpreter tool. If the code needs "
+                "external libraries, pass them via libraries_used.\n"
+                "3. If execution fails, use the file writer tool to fix the code, "
+                "then re-run it until it passes.\n\n"
+                "Continue until every file runs successfully. Report the execution "
+                "result (pass/fail and output) for each file."
+            ),
+            expected_output="Per-file test results showing pass/fail and output.",
+            agent=developer,
+            context=[implement],
+        )
+        tasks.append(test)
+
+    # -- Task 3: QA Verify -------------------------------------------------------
+    verify_description = (
+        "Use the directory read tool to see what the Developer produced.\n"
+        "Then read each file to review it against the acceptance criteria.\n"
+    )
+    if enable_code_execution:
+        verify_description += (
+            "Execute each file with the Code Interpreter tool to confirm it "
+            "runs correctly and its output matches the acceptance criteria. "
+            "Report any runtime errors or incorrect output.\n"
+        )
+    verify_description += (
+        "\nFor each story set status to 'done' if criteria are met, "
+        "or 'in_progress' if not."
+    )
+
     verify = Task(
-        description=(
-            "Use the directory read tool to see what the Developer produced.\n"
-            "Then read each file to review it against the acceptance criteria.\n"
-            "For each story set status to 'done' if criteria are met, "
-            "or 'in_progress' if not."
-        ),
+        description=verify_description,
         expected_output="Stories with updated statuses and deliverables.",
         agent=qa_engineer,
-        context=[implement],
+        context=tasks[:],
         output_pydantic=BacklogOutput,
     )
+    tasks.append(verify)
 
     return Crew(
         agents=[developer, qa_engineer],
-        tasks=[implement, verify],
+        tasks=tasks,
         process=Process.sequential,
         verbose=False,
     )
