@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
-from autoscrum.flow import _assign_ids, _fallback_stories, _select_by_velocity
-from autoscrum.models import UserStory
+from unittest.mock import MagicMock
+
+import pytest
+from litellm.exceptions import APIConnectionError, AuthenticationError
+
+from autoscrum.flow import LLMConnectionError, _assign_ids, _fallback_stories, _safe_kickoff, _select_by_velocity
+from autoscrum.models import AgentConfig, TeamConfig, UserStory
+from autoscrum.preflight import preflight_check
 
 
 class TestAssignIds:
@@ -79,6 +85,94 @@ class TestSelectByVelocity:
         ]
         selected = _select_by_velocity(stories, velocity=5)
         assert [s.id for s in selected] == ["B"]
+
+
+class TestSafeKickoff:
+    def test_auth_error_raises_llm_connection_error(self):
+        crew = MagicMock()
+        crew.kickoff.side_effect = AuthenticationError(
+            "bad key", llm_provider="openai", model="openai/gpt-4o"
+        )
+        with pytest.raises(LLMConnectionError):
+            _safe_kickoff(crew)
+
+    def test_connection_error_raises_llm_connection_error(self):
+        crew = MagicMock()
+        crew.kickoff.side_effect = APIConnectionError(
+            "unreachable", llm_provider="openai", model="openai/gpt-4o"
+        )
+        with pytest.raises(LLMConnectionError):
+            _safe_kickoff(crew)
+
+    def test_wrapped_auth_error_raises_llm_connection_error(self):
+        """CrewAI wraps litellm errors in retry envelopes — detect by message."""
+        crew = MagicMock()
+        crew.kickoff.side_effect = RuntimeError(
+            "<failed_attempts>\n"
+            "litellm.AuthenticationError: Incorrect API key provided: test\n"
+            "</failed_attempts>"
+        )
+        with pytest.raises(LLMConnectionError):
+            _safe_kickoff(crew)
+
+    def test_wrapped_connection_error_raises_llm_connection_error(self):
+        crew = MagicMock()
+        crew.kickoff.side_effect = RuntimeError(
+            "litellm.InternalServerError: Connection error."
+        )
+        with pytest.raises(LLMConnectionError):
+            _safe_kickoff(crew)
+
+    def test_other_errors_return_none(self):
+        crew = MagicMock()
+        crew.kickoff.side_effect = ValueError("parse error")
+        assert _safe_kickoff(crew) is None
+
+    def test_success_returns_result(self):
+        crew = MagicMock()
+        crew.kickoff.return_value = "result"
+        assert _safe_kickoff(crew) == "result"
+
+
+class TestPreflightCheck:
+    def test_auth_error_raises_llm_connection_error(self, monkeypatch):
+        team = TeamConfig(
+            product_owner=AgentConfig(llm="openai/gpt-4o"),
+            scrum_master=AgentConfig(llm="openai/gpt-4o"),
+            developer=AgentConfig(llm="openai/gpt-4o"),
+            qa_engineer=AgentConfig(llm="openai/gpt-4o"),
+        )
+        monkeypatch.setattr(
+            "autoscrum.preflight.completion",
+            MagicMock(side_effect=AuthenticationError(
+                "bad key", llm_provider="openai", model="openai/gpt-4o"
+            )),
+        )
+        with pytest.raises(LLMConnectionError, match="unreachable"):
+            preflight_check(team)
+
+    def test_success_passes(self, monkeypatch):
+        team = TeamConfig()
+        monkeypatch.setattr(
+            "autoscrum.preflight.completion",
+            MagicMock(return_value="ok"),
+        )
+        preflight_check(team)
+
+    def test_deduplicates_identical_configs(self, monkeypatch):
+        team = TeamConfig()
+        mock_completion = MagicMock(return_value="ok")
+        monkeypatch.setattr("autoscrum.preflight.completion", mock_completion)
+        preflight_check(team)
+        assert mock_completion.call_count == 1
+
+    def test_non_fatal_error_passes(self, monkeypatch):
+        team = TeamConfig()
+        monkeypatch.setattr(
+            "autoscrum.preflight.completion",
+            MagicMock(side_effect=ValueError("parse error")),
+        )
+        preflight_check(team)
 
 
 class TestFallbackStories:

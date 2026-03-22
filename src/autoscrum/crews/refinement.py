@@ -23,7 +23,7 @@ def build_decompose_crew(
             po_cfg.backstory
             or "Experienced Product Owner who writes clear, small user stories."
         ),
-        llm=po_cfg.llm,
+        llm=po_cfg.create_llm(),
         verbose=False,
     )
 
@@ -63,7 +63,7 @@ def build_estimate_crew(
             dev_cfg.backstory
             or "Pragmatic Developer who sizes work based on complexity."
         ),
-        llm=dev_cfg.llm,
+        llm=dev_cfg.create_llm(),
         verbose=False,
     )
 

@@ -10,9 +10,11 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
+from .config import load_team_config
 from .display import ScrumDisplay
-from .flow import ScrumFlow
+from .flow import LLMConnectionError, ScrumFlow
 from .listener import ScrumEventListener
+from .preflight import preflight_check
 
 app = typer.Typer(
     name="autoscrum",
@@ -46,6 +48,16 @@ def run(
         _silence_crewai_console()
         logging.getLogger("crewai").setLevel(logging.WARNING)
 
+    team = load_team_config(team_config)
+    console = Console(stderr=True)
+    console.print("[dim]Pre-flight: checking LLM connectivity…[/dim]")
+    try:
+        preflight_check(team)
+    except LLMConnectionError as exc:
+        console.print(f"[red bold]Pre-flight failed:[/red bold] {exc}")
+        raise typer.Exit(code=1)
+    console.print("[green]Pre-flight passed.[/green]\n")
+
     display = ScrumDisplay()
     _listener = ScrumEventListener(display=display)
 
@@ -66,6 +78,8 @@ def run(
         )
     except KeyboardInterrupt:
         display.log_activity("System", "Interrupted by user")
+    except LLMConnectionError as exc:
+        display.log_activity("System", f"[red]Cannot reach LLM — aborting: {exc}[/red]")
     except Exception as exc:
         display.log_activity("System", f"[red]Error: {exc}[/red]")
     finally:

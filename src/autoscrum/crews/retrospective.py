@@ -21,7 +21,7 @@ def build_retrospective_crew(
         role="Scrum Master",
         goal="Facilitate the retrospective and capture action items.",
         backstory=sm_cfg.backstory or "Reflective Scrum Master.",
-        llm=sm_cfg.llm,
+        llm=sm_cfg.create_llm(),
         verbose=False,
     )
 
@@ -29,7 +29,7 @@ def build_retrospective_crew(
         role="Developer",
         goal="Give honest feedback on the sprint.",
         backstory=dev_cfg.backstory or "Candid Developer.",
-        llm=dev_cfg.llm,
+        llm=dev_cfg.create_llm(),
         verbose=False,
     )
 

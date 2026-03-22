@@ -39,7 +39,7 @@ def build_execution_crew(
         role="Developer",
         goal="Implement user stories by writing working, tested code to disk.",
         backstory=dev_cfg.backstory or "Pragmatic Developer who writes clean, tested code.",
-        llm=dev_cfg.llm,
+        llm=dev_cfg.create_llm(),
         tools=dev_tools,
         verbose=False,
     )
@@ -52,7 +52,7 @@ def build_execution_crew(
             + "."
         ),
         backstory=qa_cfg.backstory or "Thorough QA Engineer who validates through testing.",
-        llm=qa_cfg.llm,
+        llm=qa_cfg.create_llm(),
         tools=qa_tools,
         verbose=False,
     )

@@ -15,6 +15,18 @@ class AgentConfig(BaseModel):
     backstory: Optional[str] = None
     count: int = 1
 
+    def create_llm(self) -> object:
+        """Return a CrewAI-compatible LLM value.
+
+        Plain model string when no base_url is set; a ``crewai.LLM`` instance
+        configured with the custom endpoint otherwise.
+        """
+        if self.base_url:
+            from crewai import LLM
+
+            return LLM(model=self.llm, base_url=self.base_url)
+        return self.llm
+
 
 class TeamConfig(BaseModel):
     """Per-role agent configuration loaded from team.yaml."""

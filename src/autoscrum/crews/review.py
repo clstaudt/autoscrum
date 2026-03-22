@@ -34,7 +34,7 @@ def build_review_crew(
         role="Product Owner",
         goal="Accept or reject stories based on acceptance criteria.",
         backstory=po_cfg.backstory or "Product Owner with high quality standards.",
-        llm=po_cfg.llm,
+        llm=po_cfg.create_llm(),
         verbose=False,
     )
 
@@ -46,7 +46,7 @@ def build_review_crew(
             + "."
         ),
         backstory=qa_cfg.backstory or "Detail-oriented QA Engineer who validates through testing.",
-        llm=qa_cfg.llm,
+        llm=qa_cfg.create_llm(),
         tools=qa_tools,
         verbose=False,
     )

@@ -1,19 +1,11 @@
 # AutoScrum Team Configuration
-# Each role can be assigned a different LLM. Uses LiteLLM model strings.
 #
-# Cloud:   openai/gpt-4o, anthropic/claude-sonnet-4-20250514, etc.
-# Ollama:  ollama/llama3, ollama/mistral  (auto-detects localhost:11434)
-# Custom:  openai/<name> + base_url: http://localhost:PORT/v1
-
-product_owner:
-  llm: openai/gpt-4o
-
-scrum_master:
-  llm: openai/gpt-4o
+# Team structure only — LLM settings come from environment variables:
+#   AUTOSCRUM_LLM        Default model for all roles (LiteLLM format)
+#   AUTOSCRUM_BASE_URL   Custom API endpoint (for oMLX, vLLM, Ollama, etc.)
+#
+# Per-role overrides (llm, base_url) can still be set here for advanced
+# cases like running the Product Owner on a different model.
 
 developer:
-  llm: openai/gpt-4o
   count: 1
-
-qa_engineer:
-  llm: openai/gpt-4o

@@ -27,7 +27,7 @@ def build_planning_crew(
         role="Product Owner",
         goal="Order the backlog by business value — most important first.",
         backstory=po_cfg.backstory or "Product Owner focused on value delivery.",
-        llm=po_cfg.llm,
+        llm=po_cfg.create_llm(),
         verbose=False,
     )
 

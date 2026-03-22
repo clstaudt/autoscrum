@@ -90,6 +90,23 @@ class TestTeamConfig:
         assert tc.product_owner.llm == "openai/gpt-4o"
 
 
+class TestAgentConfigCreateLlm:
+    def test_returns_string_without_base_url(self):
+        cfg = AgentConfig(llm="openai/gpt-4o")
+        result = cfg.create_llm()
+        assert result == "openai/gpt-4o"
+        assert isinstance(result, str)
+
+    def test_returns_llm_instance_with_base_url(self):
+        from crewai import LLM
+
+        cfg = AgentConfig(llm="openai/local-model", base_url="http://host:8000/v1")
+        result = cfg.create_llm()
+        assert isinstance(result, LLM)
+        assert result.model == "openai/local-model"
+        assert result.base_url == "http://host:8000/v1"
+
+
 class TestStructuredOutputs:
     def test_backlog_output(self, sample_stories):
         out = BacklogOutput(stories=sample_stories)

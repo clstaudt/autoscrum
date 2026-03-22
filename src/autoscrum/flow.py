@@ -8,6 +8,12 @@ from typing import TypeVar
 
 from crewai import Crew
 from crewai.flow.flow import Flow, listen, router, start
+from litellm.exceptions import (
+    APIConnectionError,
+    AuthenticationError,
+    RateLimitError,
+    ServiceUnavailableError,
+)
 
 from .config import load_team_config
 from .crews.execution import build_execution_crew
@@ -31,13 +37,48 @@ _log = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
+_FATAL_LLM_ERRORS = (
+    AuthenticationError,
+    APIConnectionError,
+    RateLimitError,
+    ServiceUnavailableError,
+)
+
+_FATAL_ERROR_PATTERNS = (
+    "AuthenticationError",
+    "APIConnectionError",
+    "RateLimitError",
+    "ServiceUnavailableError",
+    "Incorrect API key",
+    "Connection error",
+)
+
+
+class LLMConnectionError(RuntimeError):
+    """Raised when the LLM is unreachable or rejects credentials."""
+
+
+def _is_fatal(exc: Exception) -> bool:
+    """Check if *exc* is a fatal LLM error, even when wrapped by CrewAI retries."""
+    if isinstance(exc, _FATAL_LLM_ERRORS):
+        return True
+    msg = str(exc)
+    return any(pattern in msg for pattern in _FATAL_ERROR_PATTERNS)
+
 
 def _safe_kickoff(crew: Crew):
-    """Run crew.kickoff(), returning the result or None on failure."""
+    """Run crew.kickoff(), returning the result or ``None`` on non-fatal failure.
+
+    Fatal LLM errors (auth, connection, rate-limit) are re-raised as
+    :class:`LLMConnectionError` so the flow can abort immediately — even
+    when CrewAI wraps the original litellm exception in retry envelopes.
+    """
     try:
         return crew.kickoff()
     except Exception as exc:
-        _log.warning("Crew kickoff failed: %s", exc)
+        if _is_fatal(exc):
+            raise LLMConnectionError(str(exc)) from exc
+        _log.warning("Crew kickoff failed (non-fatal): %s", exc)
         return None
 
 
@@ -273,7 +314,11 @@ class ScrumFlow(Flow[ScrumState]):
                 "[yellow]Sprint time box expired — moving incomplete work to review[/yellow]",
             )
             result = None
+        except LLMConnectionError:
+            raise
         except Exception as exc:
+            if _is_fatal(exc):
+                raise LLMConnectionError(str(exc)) from exc
             self.display.log_activity(
                 "Scrum Master",
                 f"[red]Execution error: {type(exc).__name__}: {exc}[/red]",
