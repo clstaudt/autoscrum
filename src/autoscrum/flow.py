@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TypeVar
 
 from crewai import Crew
-from crewai.flow.flow import Flow, listen, router, start
+from crewai.flow.flow import Flow, listen, or_, router, start
 from litellm import completion as litellm_completion
 from litellm.exceptions import (
     APIConnectionError,
@@ -234,6 +234,8 @@ class ScrumFlow(Flow[ScrumState]):
         all_stories = list(self.state.product_backlog)
         if self.state.current_sprint:
             all_stories.extend(self.state.current_sprint.stories)
+        for sprint in self.state.completed_sprints:
+            all_stories.extend(s for s in sprint.stories if s.status == "done")
         self.display.sync_stories(all_stories)
 
     # -- flow steps ----------------------------------------------------------
@@ -309,7 +311,7 @@ class ScrumFlow(Flow[ScrumState]):
             "Scrum Master", f"Output directory: [bold]{output_dir}/[/bold]"
         )
 
-    @listen(name_project)
+    @listen(or_(name_project, "continue"))
     def plan_sprint(self, _=None):
         """Ceremony 2: Sprint Planning — select stories for the sprint."""
         self.state.sprint_number += 1
@@ -527,22 +529,31 @@ class ScrumFlow(Flow[ScrumState]):
             s.status in ("backlog", "rejected") for s in self.state.product_backlog
         )
         sprints_left = self.state.sprint_number < self.state.max_sprints
+
         if has_backlog and sprints_left:
             return "continue"
-        return "done"
 
-    @listen("continue")
-    def next_sprint(self):
-        """Loop back to planning for another sprint."""
-        self.display.log_activity("Scrum Master", "Preparing next sprint...")
-        return self.plan_sprint()
+        if not has_backlog:
+            self.state.stop_reason = "All stories completed"
+        else:
+            self.state.stop_reason = (
+                f"Sprint limit reached ({self.state.max_sprints})"
+            )
+        return "done"
 
     @listen("done")
     def wrap_up(self):
         """Final summary after all sprints are complete."""
-        from pathlib import Path
-
         self.display.set_ceremony("Project Complete")
+        self._sync_display()
+
+        project_name = Path(self.state.output_dir).name or "project"
+        reason = self.state.stop_reason or "Unknown"
+        self.display.log_activity(
+            "Scrum Master",
+            f"[bold]{project_name}[/bold] — {reason}",
+        )
+
         total_pts = sum(
             sp.completed_points for sp in self.state.completed_sprints
         )
@@ -550,17 +561,14 @@ class ScrumFlow(Flow[ScrumState]):
             len([s for s in sp.stories if s.status == "done"])
             for sp in self.state.completed_sprints
         )
+        remaining = self._backlog_stories("backlog", "rejected")
+
         self.display.log_activity(
             "Scrum Master",
-            f"Finished {self.state.sprint_number} sprint(s) — "
-            f"{total_stories} stories, {total_pts} points delivered",
+            f"{self.state.sprint_number} sprint(s), "
+            f"{total_stories} stories done ({total_pts} pts)"
+            + (f", {len(remaining)} remaining in backlog" if remaining else ""),
         )
-        remaining = self._backlog_stories("backlog", "rejected")
-        if remaining:
-            self.display.log_activity(
-                "Product Owner",
-                f"{len(remaining)} stories remain in the backlog",
-            )
 
         output_dir = Path(self.state.output_dir)
         if output_dir.exists():
@@ -568,10 +576,11 @@ class ScrumFlow(Flow[ScrumState]):
             if files:
                 self.display.log_activity(
                     "Scrum Master",
-                    f"[bold]Product output ({len(files)} files in {output_dir}/):[/bold]",
+                    f"[bold]Output ({len(files)} files):[/bold]",
                 )
                 for f in files[:20]:
-                    self.display.log_activity("  ", f"[dim]{f}[/dim]")
+                    rel = f.relative_to(output_dir)
+                    self.display.log_activity("  ", f"[dim]{rel}[/dim]")
             else:
                 self.display.log_activity(
                     "Scrum Master", "[yellow]No output files were produced[/yellow]"

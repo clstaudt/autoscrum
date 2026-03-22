@@ -79,6 +79,7 @@ class ScrumState(BaseModel):
     output_dir: str = ""
     enable_code_execution: bool = True
     retro_action_items: list[str] = Field(default_factory=list)
+    stop_reason: str = ""
 
 
 # -- Structured output wrappers for crew tasks ------------------------------
