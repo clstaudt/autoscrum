@@ -38,6 +38,7 @@ def run(
     sprint_duration: Annotated[int, typer.Option(help="Sprint time-box in seconds.")] = 300,
     max_sprints: Annotated[int, typer.Option(help="Number of sprints to run.")] = 3,
     initial_velocity: Annotated[int, typer.Option(help="Story points for sprint 1 (adjusts empirically).")] = 13,
+    no_code_execution: Annotated[bool, typer.Option("--no-code-execution", help="Disable running code via Docker during testing and review.")] = False,
     verbose: Annotated[bool, typer.Option(help="Show CrewAI's internal output alongside the board.")] = False,
 ) -> None:
     """Give the team a goal and watch them build it."""
@@ -60,6 +61,7 @@ def run(
                 "max_sprints": max_sprints,
                 "velocity": initial_velocity,
                 "output_dir": str(output_dir),
+                "enable_code_execution": not no_code_execution,
             }
         )
     except KeyboardInterrupt:

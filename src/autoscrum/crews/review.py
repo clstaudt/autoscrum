@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 from crewai import Agent, Crew, Process, Task
+from crewai_tools import DirectoryReadTool, FileReadTool
 
 from ..models import ReviewOutput, TeamConfig, UserStory
 
@@ -13,10 +14,21 @@ def build_review_crew(
     stories: list[UserStory],
     sprint_number: int,
     team: TeamConfig,
+    output_dir: str = "product",
+    enable_code_execution: bool = True,
 ) -> Crew:
     """Build a crew that reviews sprint work and accepts or rejects stories."""
     po_cfg = team.product_owner
     qa_cfg = team.qa_engineer
+
+    reader = FileReadTool()
+    explorer = DirectoryReadTool(directory=output_dir)
+    qa_tools: list = [reader, explorer]
+
+    if enable_code_execution:
+        from crewai_tools import CodeInterpreterTool
+
+        qa_tools.append(CodeInterpreterTool())
 
     product_owner = Agent(
         role="Product Owner",
@@ -28,9 +40,14 @@ def build_review_crew(
 
     qa_engineer = Agent(
         role="QA Engineer",
-        goal="Check whether acceptance criteria are satisfied.",
-        backstory=qa_cfg.backstory or "Detail-oriented QA Engineer.",
+        goal=(
+            "Validate deliverables against acceptance criteria"
+            + (" by reading and executing the code" if enable_code_execution else "")
+            + "."
+        ),
+        backstory=qa_cfg.backstory or "Detail-oriented QA Engineer who validates through testing.",
         llm=qa_cfg.llm,
+        tools=qa_tools,
         verbose=False,
     )
 
@@ -40,12 +57,24 @@ def build_review_crew(
         indent=2,
     )
 
+    review_description = f"Sprint {sprint_number} review:\n{stories_json}\n\n"
+    if enable_code_execution:
+        review_description += (
+            "For each story:\n"
+            "1. Read the deliverable files with the file read tool.\n"
+            "2. Execute the code with the Code Interpreter tool to verify it "
+            "runs without errors.\n"
+            "3. Check that the runtime output and behaviour satisfy the "
+            "acceptance criteria.\n"
+            "4. Report pass/fail per story with evidence (output, errors, or "
+            "missing behaviour)."
+        )
+    else:
+        review_description += "Check each story against its acceptance criteria."
+
     review = Task(
-        description=(
-            f"Sprint {sprint_number} review:\n{stories_json}\n\n"
-            "Check each story against its acceptance criteria."
-        ),
-        expected_output="Per-story pass/fail assessment.",
+        description=review_description,
+        expected_output="Per-story pass/fail assessment with evidence.",
         agent=qa_engineer,
     )
 

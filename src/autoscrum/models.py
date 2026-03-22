@@ -63,6 +63,7 @@ class ScrumState(BaseModel):
     max_sprints: int = 3
     sprint_duration_seconds: int = 300
     output_dir: str = "product"
+    enable_code_execution: bool = True
     retro_action_items: list[str] = Field(default_factory=list)
 
 
