@@ -229,6 +229,29 @@ class ScrumFlow(Flow[ScrumState]):
         total = sum(s.completed_points for s in sprints)
         return max(1, round(total / len(sprints)))
 
+    def _append_review_to_diary(self, sprint: Sprint) -> None:
+        """Record review outcomes in the diary."""
+        lines = [f"\n## Sprint {sprint.number} — Review"]
+        for s in sprint.stories:
+            if s.status == "done":
+                lines.append(f"- {s.id} ({s.title}): accepted")
+            elif s.status == "backlog" and s.rejection_reason:
+                lines.append(f"- {s.id} ({s.title}): rejected — {s.rejection_reason}")
+            elif s.status == "backlog":
+                lines.append(f"- {s.id} ({s.title}): rejected")
+        self.state.diary += "\n".join(lines) + "\n"
+
+    def _append_retro_to_diary(self, sprint: Sprint, retro: RetroOutput) -> None:
+        """Record retrospective findings in the diary."""
+        lines = [f"\n## Sprint {sprint.number} — Retrospective"]
+        if retro.went_well:
+            lines.append("Went well: " + "; ".join(retro.went_well))
+        if retro.needs_improvement:
+            lines.append("Improve: " + "; ".join(retro.needs_improvement))
+        if retro.action_items:
+            lines.append("Action items: " + "; ".join(retro.action_items))
+        self.state.diary += "\n".join(lines) + "\n"
+
     def _sync_display(self) -> None:
         """Push the current story list to the live display."""
         all_stories = list(self.state.product_backlog)
@@ -334,6 +357,7 @@ class ScrumFlow(Flow[ScrumState]):
             velocity=self.state.velocity,
             sprint_number=self.state.sprint_number,
             team=self.team,
+            diary=self.state.diary,
         )
         result = _safe_kickoff(crew)
 
@@ -395,6 +419,7 @@ class ScrumFlow(Flow[ScrumState]):
             team=self.team,
             output_dir=self.state.output_dir,
             enable_code_execution=self.state.enable_code_execution,
+            diary=self.state.diary,
         )
 
         try:
@@ -461,14 +486,18 @@ class ScrumFlow(Flow[ScrumState]):
             team=self.team,
             output_dir=self.state.output_dir,
             enable_code_execution=self.state.enable_code_execution,
+            diary=self.state.diary,
         )
         result = _safe_kickoff(crew)
 
         if result and result.pydantic and isinstance(result.pydantic, ReviewOutput):
-            verdict_map = {v.story_id: v.status for v in result.pydantic.verdicts}
+            verdict_map = {v.story_id: v for v in result.pydantic.verdicts}
             for s in sprint.stories:
                 if s.id in verdict_map:
-                    s.status = verdict_map[s.id]
+                    v = verdict_map[s.id]
+                    s.status = v.status
+                    if v.status == "rejected":
+                        s.rejection_reason = v.reason
         else:
             for s in sprint.stories:
                 if s.status == "in_review":
@@ -483,6 +512,8 @@ class ScrumFlow(Flow[ScrumState]):
         for s in rejected:
             s.status = "backlog"
             self.state.product_backlog.append(s)
+
+        self._append_review_to_diary(sprint)
 
         self._sync_display()
         self.display.log_activity(
@@ -505,12 +536,17 @@ class ScrumFlow(Flow[ScrumState]):
             planned_points=sprint.planned_points,
             completed_points=sprint.completed_points,
             team=self.team,
+            diary=self.state.diary,
         )
         result = _safe_kickoff(crew)
 
         if result and result.pydantic and isinstance(result.pydantic, RetroOutput):
             retro: RetroOutput = result.pydantic
-            self.state.retro_action_items = retro.action_items
+            for item in retro.action_items:
+                self.state.retro_action_items.append(
+                    f"Sprint {sprint.number}: {item}"
+                )
+            self._append_retro_to_diary(sprint, retro)
 
         self.state.completed_sprints.append(sprint)
         self.state.current_sprint = None

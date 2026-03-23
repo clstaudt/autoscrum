@@ -51,6 +51,7 @@ class UserStory(BaseModel):
         "backlog", "planned", "in_progress", "in_review", "done", "rejected"
     ] = "backlog"
     deliverables: list[str] = Field(default_factory=list)
+    rejection_reason: str = ""
 
 
 class Sprint(BaseModel):
@@ -79,6 +80,7 @@ class ScrumState(BaseModel):
     output_dir: str = ""
     enable_code_execution: bool = True
     retro_action_items: list[str] = Field(default_factory=list)
+    diary: str = ""
     stop_reason: str = ""
 
 

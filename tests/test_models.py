@@ -25,6 +25,7 @@ class TestUserStory:
         assert s.story_points == 0
         assert s.acceptance_criteria == []
         assert s.deliverables == []
+        assert s.rejection_reason == ""
 
     def test_valid_statuses(self):
         for status in ("backlog", "planned", "in_progress", "in_review", "done", "rejected"):

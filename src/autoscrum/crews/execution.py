@@ -16,6 +16,7 @@ def build_execution_crew(
     team: TeamConfig,
     output_dir: str = "output",
     enable_code_execution: bool = True,
+    diary: str = "",
 ) -> Crew:
     """Build a crew that implements, tests, and verifies *stories* for the sprint."""
     dev_cfg = team.developer
@@ -57,24 +58,29 @@ def build_execution_crew(
         verbose=False,
     )
 
+    fields = {"id", "title", "description", "acceptance_criteria", "rejection_reason"}
     stories_json = json.dumps(
-        [s.model_dump(include={"id", "title", "description", "acceptance_criteria"})
-         for s in stories],
+        [s.model_dump(include=fields) for s in stories],
         indent=2,
     )
 
     # -- Task 1: Implement -------------------------------------------------------
+    impl_desc = (
+        f"Sprint {sprint_number} — implement these stories:\n{stories_json}\n\n"
+        "Use the directory read tool to see what already exists in the codebase.\n"
+        "Then use the file writer tool to create or update files for each story.\n"
+        f"All files MUST be written inside the '{output_dir}/' directory.\n\n"
+        "IMPORTANT: You MUST use the file writer tool to produce working code. "
+        "Do NOT just describe code — actually write it.\n\n"
+        f"Example: File Writer Tool(filename='todo.py', directory='{output_dir}', "
+        "content='print(\"hello\")', overwrite='true')"
+    )
+
+    if diary:
+        impl_desc += f"\n\n--- Sprint diary (previous events) ---\n{diary}"
+
     implement = Task(
-        description=(
-            f"Sprint {sprint_number} — implement these stories:\n{stories_json}\n\n"
-            "Use the directory read tool to see what already exists in the codebase.\n"
-            "Then use the file writer tool to create or update files for each story.\n"
-            f"All files MUST be written inside the '{output_dir}/' directory.\n\n"
-            "IMPORTANT: You MUST use the file writer tool to produce working code. "
-            "Do NOT just describe code — actually write it.\n\n"
-            f"Example: File Writer Tool(filename='todo.py', directory='{output_dir}', "
-            "content='print(\"hello\")', overwrite='true')"
-        ),
+        description=impl_desc,
         expected_output="A list of files written (one per story minimum).",
         agent=developer,
     )

@@ -12,6 +12,7 @@ def build_retrospective_crew(
     planned_points: int,
     completed_points: int,
     team: TeamConfig,
+    diary: str = "",
 ) -> Crew:
     """Build a crew that reflects on the sprint and proposes improvements."""
     sm_cfg = team.scrum_master
@@ -33,11 +34,15 @@ def build_retrospective_crew(
         verbose=False,
     )
 
+    reflect_desc = (
+        f"Sprint {sprint_number}: {completed_points}/{planned_points} points done.\n"
+        "Reflect on the sprint. What went well? What should improve?"
+    )
+    if diary:
+        reflect_desc += f"\n\n--- Sprint diary (previous events) ---\n{diary}"
+
     reflect = Task(
-        description=(
-            f"Sprint {sprint_number}: {completed_points}/{planned_points} points done.\n"
-            "Reflect on the sprint. What went well? What should improve?"
-        ),
+        description=reflect_desc,
         expected_output="What went well and what to improve.",
         agent=developer,
     )

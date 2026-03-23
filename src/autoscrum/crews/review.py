@@ -16,6 +16,7 @@ def build_review_crew(
     team: TeamConfig,
     output_dir: str = "product",
     enable_code_execution: bool = True,
+    diary: str = "",
 ) -> Crew:
     """Build a crew that reviews sprint work and accepts or rejects stories."""
     po_cfg = team.product_owner
@@ -58,6 +59,8 @@ def build_review_crew(
     )
 
     review_description = f"Sprint {sprint_number} review:\n{stories_json}\n\n"
+    if diary:
+        review_description += f"--- Sprint diary (previous events) ---\n{diary}\n\n"
     if enable_code_execution:
         review_description += (
             "For each story:\n"
