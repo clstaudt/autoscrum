@@ -14,6 +14,7 @@ def build_planning_crew(
     velocity: int,
     sprint_number: int,
     team: TeamConfig,
+    diary: str = "",
 ) -> Crew:
     """Build a crew that prioritizes the backlog.
 
@@ -27,21 +28,27 @@ def build_planning_crew(
         role="Product Owner",
         goal="Order the backlog by business value — most important first.",
         backstory=po_cfg.backstory or "Product Owner focused on value delivery.",
-        llm=po_cfg.llm,
+        llm=po_cfg.create_llm(),
         verbose=False,
     )
 
+    fields = {"id", "title", "story_points", "rejection_reason"}
     backlog_json = json.dumps(
-        [s.model_dump(include={"id", "title", "story_points"}) for s in backlog],
+        [s.model_dump(include=fields) for s in backlog],
         indent=2,
     )
 
+    desc = (
+        f"Sprint {sprint_number} backlog:\n{backlog_json}\n\n"
+        "Return these stories ordered by business value (most valuable first). "
+        "Do not change any fields — only reorder."
+    )
+
+    if diary:
+        desc += f"\n\n--- Sprint diary (previous events) ---\n{diary}"
+
     prioritize = Task(
-        description=(
-            f"Sprint {sprint_number} backlog:\n{backlog_json}\n\n"
-            "Return these stories ordered by business value (most valuable first). "
-            "Do not change any fields — only reorder."
-        ),
+        description=desc,
         expected_output="The same stories reordered by priority.",
         agent=product_owner,
         output_pydantic=BacklogOutput,

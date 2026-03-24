@@ -15,6 +15,20 @@ class AgentConfig(BaseModel):
     backstory: Optional[str] = None
     count: int = 1
 
+    def create_llm(self) -> object:
+        """Return a CrewAI-compatible LLM value.
+
+        Always returns a ``crewai.LLM`` with ``stream=True`` so the display
+        can show tokens as they arrive.  When *base_url* is set the custom
+        endpoint is wired in as well.
+        """
+        from crewai import LLM
+
+        kwargs: dict = {"model": self.llm, "stream": True}
+        if self.base_url:
+            kwargs["base_url"] = self.base_url
+        return LLM(**kwargs)
+
 
 class TeamConfig(BaseModel):
     """Per-role agent configuration loaded from team.yaml."""
@@ -37,6 +51,7 @@ class UserStory(BaseModel):
         "backlog", "planned", "in_progress", "in_review", "done", "rejected"
     ] = "backlog"
     deliverables: list[str] = Field(default_factory=list)
+    rejection_reason: str = ""
 
 
 class Sprint(BaseModel):
@@ -62,9 +77,11 @@ class ScrumState(BaseModel):
     velocity: int = 13
     max_sprints: int = 3
     sprint_duration_seconds: int = 300
-    output_dir: str = "product"
+    output_dir: str = ""
     enable_code_execution: bool = True
     retro_action_items: list[str] = Field(default_factory=list)
+    diary: str = ""
+    stop_reason: str = ""
 
 
 # -- Structured output wrappers for crew tasks ------------------------------

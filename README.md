@@ -17,25 +17,27 @@
 AutoScrum turns a one-line project description into working software. It spins up
 an AI-powered Scrum team — Product Owner, Scrum Master, Developers, QA — that
 refines a backlog, plans sprints, writes code, reviews it, and retrospects. You
-watch the whole process unfold on a live Kanban board in your terminal.
+watch the whole process unfold on a live board in your terminal.
 
 ## Quick Start
 
 ```bash
 uv sync
-
+cp .env.example .env   # add your API key or local server URL
 uv run autoscrum "Build a CLI calculator in Python"
 ```
 
-That's it. AutoScrum will:
+AutoScrum will:
 
 1. **Refine** the goal into user stories with acceptance criteria
-2. **Plan** a sprint by prioritizing and selecting stories
-3. **Execute** — developers write real code files to `product/`
-4. **Review** — QA reads the code and verifies acceptance criteria
-5. **Retrospect** — the team reflects and adapts
+2. **Estimate** story complexity (Fibonacci points)
+3. **Plan** a sprint by prioritizing and selecting stories that fit the velocity
+4. **Execute** — developers write real code to disk
+5. **Review** — QA verifies acceptance criteria, PO accepts or rejects
+6. **Retrospect** — the team reflects and adapts velocity
 
-Repeat for as many sprints as configured.
+Repeat for as many sprints as configured. Output lands in a named directory under
+`products/`, chosen by the Product Owner after requirements analysis.
 
 ## The Live Board
 
@@ -43,31 +45,45 @@ Repeat for as many sprints as configured.
   <img src="docs/board.png" alt="AutoScrum live Kanban board" width="720">
 </p>
 
-Stories move across columns in real time. A spinner shows who's thinking, for how
-long, and how many LLM calls have been made.
+Stories move across columns in real time. The right panel streams raw LLM output
+as it's generated — reasoning and all — so you can see what the agents are
+thinking.
 
 ## Configuration
 
-### Team (`team.yaml`)
+### LLM (environment)
 
-Each role maps to any LLM supported by [LiteLLM](https://docs.litellm.ai/docs/providers):
+All agents share the same model by default. Set it once in `.env`:
 
-```yaml
-product_owner:
-  llm: anthropic/claude-sonnet-4-20250514
-
-scrum_master:
-  llm: openai/gpt-4o
-
-developer:
-  llm: ollama/qwen3:8b
-
-qa_engineer:
-  llm: ollama/codellama
+```bash
+AUTOSCRUM_LLM=openai/gpt-4o
+OPENAI_API_KEY=sk-...
 ```
 
-Mix cloud APIs and local models freely. Run different models per role — give your
-developer a coding-tuned model while the PO uses a reasoning model.
+For a local server (oMLX, vLLM, Ollama, etc.):
+
+```bash
+AUTOSCRUM_LLM=openai/my-local-model
+AUTOSCRUM_BASE_URL=http://myserver:8000/v1
+OPENAI_API_KEY=not-needed
+```
+
+Any [LiteLLM-compatible](https://docs.litellm.ai/docs/providers) model string
+works — cloud or local.
+
+### Team (`team.yaml`)
+
+The team file defines structure, not LLM settings. Override a specific role when
+you want to run a different model for it:
+
+```yaml
+developer:
+  count: 1
+
+# Optional per-role override:
+product_owner:
+  llm: anthropic/claude-sonnet-4-20250514
+```
 
 ### CLI
 
@@ -75,54 +91,23 @@ developer a coding-tuned model while the PO uses a reasoning model.
 uv run autoscrum [OPTIONS] GOAL
 ```
 
-**GOAL** — what to build, in plain English. This is the only required argument.
-
-```bash
-# Minimal — just a goal
-uv run autoscrum "Build a markdown blog engine"
-
-# Full control
-uv run autoscrum "Build a REST API for a bookstore" \
-  --output-dir bookstore \
-  --team-config team.yaml \
-  --sprint-duration 600 \
-  --max-sprints 3 \
-  --initial-velocity 13
-```
-
 | Option | Default | Description |
 |---|---|---|
-| `--output-dir DIR` | `product` | Directory where the product code is written. Created automatically. Gitignored by default. |
-| `--team-config FILE` | `team.yaml` | Team configuration file (LLM assignments per role). |
-| `--sprint-duration SEC` | `300` | Wall-clock time-box per sprint in seconds. Incomplete work returns to the backlog when time runs out. |
-| `--max-sprints N` | `3` | How many sprints to run before finishing. |
-| `--initial-velocity N` | `13` | Story points for sprint 1. Adjusts empirically after each sprint based on completed work. |
-| `--verbose` | off | Show CrewAI's internal output alongside the live board. Useful for debugging. |
+| `--team-config FILE` | `team.yaml` | Team configuration file. |
+| `--sprint-duration MIN` | `5` | Time-box per sprint in minutes. |
+| `--max-sprints N` | `3` | Number of sprints to run. |
+| `--initial-velocity N` | `13` | Story points for sprint 1 (adjusts after each sprint). |
+| `--output-dir DIR` | *(auto)* | Override the output directory. By default a name is chosen after backlog refinement. |
+| `--no-code-execution` | off | Disable running code in Docker during testing/review. |
+| `--verbose` | off | Show CrewAI internals alongside the board. |
 
-### Local LLMs
+## Pre-flight Check
 
-AutoScrum works with any OpenAI-compatible server. For [Ollama](https://ollama.com):
+Before the first sprint begins, AutoScrum verifies that every configured LLM is
+reachable. If a connection fails the process exits immediately with a clear error
+— no silent failures, no half-completed sprints.
 
-```bash
-ollama pull qwen3:8b
-uv run autoscrum "Build a todo app" --team-config team.yaml
-```
-
-Point to a custom server by adding `base_url` in the team config:
-
-```yaml
-developer:
-  llm: openai/my-model
-  base_url: http://localhost:8080/v1
-```
-
-## What Gets Built
-
-The product is real files on disk — not summaries, not descriptions. Developers use
-file tools to read, write, and explore the codebase across sprints. Each sprint
-builds on the last. At the end, `--output-dir` contains the project.
-
-## Why
+## Why Scrum?
 
 Most agent demos are single-shot: one prompt, one response. Real software
 development is iterative. AutoScrum explores what happens when you give AI agents

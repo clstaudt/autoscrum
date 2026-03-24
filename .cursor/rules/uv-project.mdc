@@ -1,0 +1,16 @@
+---
+description: This project uses uv for Python dependency and environment management
+alwaysApply: true
+---
+
+# uv-managed Python project
+
+This project uses `uv` for dependency management. A `.venv` and `uv.lock` exist at the project root.
+
+- ALWAYS use `uv` commands for dependency operations:
+  - Install: `uv pip install <package>`
+  - Add to project: `uv add <package>`
+  - Sync lock file: `uv sync`
+  - Run commands: `uv run <command>`
+- NEVER use bare `pip install` — it targets the global environment, not the project venv.
+- NEVER use `conda install` or any other package manager for Python dependencies.

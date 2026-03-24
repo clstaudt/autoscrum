@@ -4,10 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+from pathlib import Path
 from typing import TypeVar
 
 from crewai import Crew
-from crewai.flow.flow import Flow, listen, router, start
+from crewai.flow.flow import Flow, listen, or_, router, start
+from litellm import completion as litellm_completion
+from litellm.exceptions import (
+    APIConnectionError,
+    AuthenticationError,
+    RateLimitError,
+    ServiceUnavailableError,
+)
 
 from .config import load_team_config
 from .crews.execution import build_execution_crew
@@ -31,13 +40,48 @@ _log = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
+_FATAL_LLM_ERRORS = (
+    AuthenticationError,
+    APIConnectionError,
+    RateLimitError,
+    ServiceUnavailableError,
+)
+
+_FATAL_ERROR_PATTERNS = (
+    "AuthenticationError",
+    "APIConnectionError",
+    "RateLimitError",
+    "ServiceUnavailableError",
+    "Incorrect API key",
+    "Connection error",
+)
+
+
+class LLMConnectionError(RuntimeError):
+    """Raised when the LLM is unreachable or rejects credentials."""
+
+
+def _is_fatal(exc: Exception) -> bool:
+    """Check if *exc* is a fatal LLM error, even when wrapped by CrewAI retries."""
+    if isinstance(exc, _FATAL_LLM_ERRORS):
+        return True
+    msg = str(exc)
+    return any(pattern in msg for pattern in _FATAL_ERROR_PATTERNS)
+
 
 def _safe_kickoff(crew: Crew):
-    """Run crew.kickoff(), returning the result or None on failure."""
+    """Run crew.kickoff(), returning the result or ``None`` on non-fatal failure.
+
+    Fatal LLM errors (auth, connection, rate-limit) are re-raised as
+    :class:`LLMConnectionError` so the flow can abort immediately — even
+    when CrewAI wraps the original litellm exception in retry envelopes.
+    """
     try:
         return crew.kickoff()
     except Exception as exc:
-        _log.warning("Crew kickoff failed: %s", exc)
+        if _is_fatal(exc):
+            raise LLMConnectionError(str(exc)) from exc
+        _log.warning("Crew kickoff failed (non-fatal): %s", exc)
         return None
 
 
@@ -59,6 +103,76 @@ def _select_by_velocity(ordered: list[UserStory], velocity: int) -> list[UserSto
             selected.append(s)
             pts += s.story_points
     return selected
+
+
+_PRODUCTS_ROOT = Path("products")
+
+
+def _sanitize_slug(raw: str) -> str:
+    """Turn an arbitrary string into a clean filesystem slug."""
+    slug = raw.strip().strip("`\"'").lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", slug)
+    slug = slug.strip("-")[:60]
+    return slug or "project"
+
+
+_SLUG_RE = re.compile(r"[a-z][a-z0-9-]{2,40}")
+
+
+def _extract_slug(text: str) -> str | None:
+    """Pull the best slug candidate out of potentially verbose LLM output."""
+    for line in reversed(text.strip().splitlines()):
+        cleaned = line.strip().strip("`\"'* ").lower()
+        m = _SLUG_RE.search(cleaned)
+        if m and "-" in m.group():
+            return m.group()
+    return None
+
+
+def _generate_project_slug(
+    goal: str,
+    stories: list[UserStory],
+    cfg: "AgentConfig",
+) -> str:
+    """Ask the LLM for a short directory name informed by the refined stories."""
+    from .models import AgentConfig  # noqa: F811 – local to avoid circular at module level
+
+    story_summary = "\n".join(f"- {s.title}: {s.description}" for s in stories)
+    kwargs: dict = {
+        "model": cfg.llm,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are a project naming assistant. Output ONLY a "
+                    "hyphen-separated directory name, 2-4 lowercase words. "
+                    "No explanation, no reasoning, no thinking."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Name this project: {goal}\n\n"
+                    f"Stories:\n{story_summary}"
+                ),
+            },
+        ],
+        "max_tokens": 200,
+        "temperature": 0.3,
+    }
+    if cfg.base_url:
+        kwargs["base_url"] = cfg.base_url
+
+    try:
+        result = litellm_completion(**kwargs)
+        raw = result.choices[0].message.content or ""
+        slug = _extract_slug(raw) or _sanitize_slug(raw)
+        if slug:
+            return slug
+    except Exception:
+        pass
+
+    return _sanitize_slug(goal)[:40] or "project"
 
 
 def _fallback_stories(project_goal: str) -> list[UserStory]:
@@ -115,11 +229,36 @@ class ScrumFlow(Flow[ScrumState]):
         total = sum(s.completed_points for s in sprints)
         return max(1, round(total / len(sprints)))
 
+    def _append_review_to_diary(self, sprint: Sprint) -> None:
+        """Record review outcomes in the diary."""
+        lines = [f"\n## Sprint {sprint.number} — Review"]
+        for s in sprint.stories:
+            if s.status == "done":
+                lines.append(f"- {s.id} ({s.title}): accepted")
+            elif s.status == "backlog" and s.rejection_reason:
+                lines.append(f"- {s.id} ({s.title}): rejected — {s.rejection_reason}")
+            elif s.status == "backlog":
+                lines.append(f"- {s.id} ({s.title}): rejected")
+        self.state.diary += "\n".join(lines) + "\n"
+
+    def _append_retro_to_diary(self, sprint: Sprint, retro: RetroOutput) -> None:
+        """Record retrospective findings in the diary."""
+        lines = [f"\n## Sprint {sprint.number} — Retrospective"]
+        if retro.went_well:
+            lines.append("Went well: " + "; ".join(retro.went_well))
+        if retro.needs_improvement:
+            lines.append("Improve: " + "; ".join(retro.needs_improvement))
+        if retro.action_items:
+            lines.append("Action items: " + "; ".join(retro.action_items))
+        self.state.diary += "\n".join(lines) + "\n"
+
     def _sync_display(self) -> None:
         """Push the current story list to the live display."""
         all_stories = list(self.state.product_backlog)
         if self.state.current_sprint:
             all_stories.extend(self.state.current_sprint.stories)
+        for sprint in self.state.completed_sprints:
+            all_stories.extend(s for s in sprint.stories if s.status == "done")
         self.display.sync_stories(all_stories)
 
     # -- flow steps ----------------------------------------------------------
@@ -173,6 +312,29 @@ class ScrumFlow(Flow[ScrumState]):
         return self.state.product_backlog
 
     @listen(refine_backlog)
+    def name_project(self, _=None):
+        """Derive a project directory name from the refined backlog."""
+        if self.state.output_dir:
+            Path(self.state.output_dir).mkdir(parents=True, exist_ok=True)
+            self.display.log_activity(
+                "Scrum Master", f"Output directory: [bold]{self.state.output_dir}/[/bold]"
+            )
+            return
+
+        self.display.log_activity("Scrum Master", "Naming project…")
+        slug = _generate_project_slug(
+            self.state.project_goal,
+            self.state.product_backlog,
+            self.team.product_owner,
+        )
+        output_dir = _PRODUCTS_ROOT / slug
+        output_dir.mkdir(parents=True, exist_ok=True)
+        self.state.output_dir = str(output_dir)
+        self.display.log_activity(
+            "Scrum Master", f"Output directory: [bold]{output_dir}/[/bold]"
+        )
+
+    @listen(or_(name_project, "continue"))
     def plan_sprint(self, _=None):
         """Ceremony 2: Sprint Planning — select stories for the sprint."""
         self.state.sprint_number += 1
@@ -195,6 +357,7 @@ class ScrumFlow(Flow[ScrumState]):
             velocity=self.state.velocity,
             sprint_number=self.state.sprint_number,
             team=self.team,
+            diary=self.state.diary,
         )
         result = _safe_kickoff(crew)
 
@@ -256,6 +419,7 @@ class ScrumFlow(Flow[ScrumState]):
             team=self.team,
             output_dir=self.state.output_dir,
             enable_code_execution=self.state.enable_code_execution,
+            diary=self.state.diary,
         )
 
         try:
@@ -273,7 +437,11 @@ class ScrumFlow(Flow[ScrumState]):
                 "[yellow]Sprint time box expired — moving incomplete work to review[/yellow]",
             )
             result = None
+        except LLMConnectionError:
+            raise
         except Exception as exc:
+            if _is_fatal(exc):
+                raise LLMConnectionError(str(exc)) from exc
             self.display.log_activity(
                 "Scrum Master",
                 f"[red]Execution error: {type(exc).__name__}: {exc}[/red]",
@@ -318,14 +486,18 @@ class ScrumFlow(Flow[ScrumState]):
             team=self.team,
             output_dir=self.state.output_dir,
             enable_code_execution=self.state.enable_code_execution,
+            diary=self.state.diary,
         )
         result = _safe_kickoff(crew)
 
         if result and result.pydantic and isinstance(result.pydantic, ReviewOutput):
-            verdict_map = {v.story_id: v.status for v in result.pydantic.verdicts}
+            verdict_map = {v.story_id: v for v in result.pydantic.verdicts}
             for s in sprint.stories:
                 if s.id in verdict_map:
-                    s.status = verdict_map[s.id]
+                    v = verdict_map[s.id]
+                    s.status = v.status
+                    if v.status == "rejected":
+                        s.rejection_reason = v.reason
         else:
             for s in sprint.stories:
                 if s.status == "in_review":
@@ -340,6 +512,8 @@ class ScrumFlow(Flow[ScrumState]):
         for s in rejected:
             s.status = "backlog"
             self.state.product_backlog.append(s)
+
+        self._append_review_to_diary(sprint)
 
         self._sync_display()
         self.display.log_activity(
@@ -362,12 +536,17 @@ class ScrumFlow(Flow[ScrumState]):
             planned_points=sprint.planned_points,
             completed_points=sprint.completed_points,
             team=self.team,
+            diary=self.state.diary,
         )
         result = _safe_kickoff(crew)
 
         if result and result.pydantic and isinstance(result.pydantic, RetroOutput):
             retro: RetroOutput = result.pydantic
-            self.state.retro_action_items = retro.action_items
+            for item in retro.action_items:
+                self.state.retro_action_items.append(
+                    f"Sprint {sprint.number}: {item}"
+                )
+            self._append_retro_to_diary(sprint, retro)
 
         self.state.completed_sprints.append(sprint)
         self.state.current_sprint = None
@@ -386,22 +565,31 @@ class ScrumFlow(Flow[ScrumState]):
             s.status in ("backlog", "rejected") for s in self.state.product_backlog
         )
         sprints_left = self.state.sprint_number < self.state.max_sprints
+
         if has_backlog and sprints_left:
             return "continue"
-        return "done"
 
-    @listen("continue")
-    def next_sprint(self):
-        """Loop back to planning for another sprint."""
-        self.display.log_activity("Scrum Master", "Preparing next sprint...")
-        return self.plan_sprint()
+        if not has_backlog:
+            self.state.stop_reason = "All stories completed"
+        else:
+            self.state.stop_reason = (
+                f"Sprint limit reached ({self.state.max_sprints})"
+            )
+        return "done"
 
     @listen("done")
     def wrap_up(self):
         """Final summary after all sprints are complete."""
-        from pathlib import Path
-
         self.display.set_ceremony("Project Complete")
+        self._sync_display()
+
+        project_name = Path(self.state.output_dir).name or "project"
+        reason = self.state.stop_reason or "Unknown"
+        self.display.log_activity(
+            "Scrum Master",
+            f"[bold]{project_name}[/bold] — {reason}",
+        )
+
         total_pts = sum(
             sp.completed_points for sp in self.state.completed_sprints
         )
@@ -409,17 +597,14 @@ class ScrumFlow(Flow[ScrumState]):
             len([s for s in sp.stories if s.status == "done"])
             for sp in self.state.completed_sprints
         )
+        remaining = self._backlog_stories("backlog", "rejected")
+
         self.display.log_activity(
             "Scrum Master",
-            f"Finished {self.state.sprint_number} sprint(s) — "
-            f"{total_stories} stories, {total_pts} points delivered",
+            f"{self.state.sprint_number} sprint(s), "
+            f"{total_stories} stories done ({total_pts} pts)"
+            + (f", {len(remaining)} remaining in backlog" if remaining else ""),
         )
-        remaining = self._backlog_stories("backlog", "rejected")
-        if remaining:
-            self.display.log_activity(
-                "Product Owner",
-                f"{len(remaining)} stories remain in the backlog",
-            )
 
         output_dir = Path(self.state.output_dir)
         if output_dir.exists():
@@ -427,10 +612,11 @@ class ScrumFlow(Flow[ScrumState]):
             if files:
                 self.display.log_activity(
                     "Scrum Master",
-                    f"[bold]Product output ({len(files)} files in {output_dir}/):[/bold]",
+                    f"[bold]Output ({len(files)} files):[/bold]",
                 )
                 for f in files[:20]:
-                    self.display.log_activity("  ", f"[dim]{f}[/dim]")
+                    rel = f.relative_to(output_dir)
+                    self.display.log_activity("  ", f"[dim]{rel}[/dim]")
             else:
                 self.display.log_activity(
                     "Scrum Master", "[yellow]No output files were produced[/yellow]"

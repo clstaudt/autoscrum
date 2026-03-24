@@ -25,6 +25,7 @@ class TestUserStory:
         assert s.story_points == 0
         assert s.acceptance_criteria == []
         assert s.deliverables == []
+        assert s.rejection_reason == ""
 
     def test_valid_statuses(self):
         for status in ("backlog", "planned", "in_progress", "in_review", "done", "rejected"):
@@ -62,7 +63,7 @@ class TestScrumState:
         assert state.project_goal == ""
         assert state.velocity == 13
         assert state.max_sprints == 3
-        assert state.output_dir == "product"
+        assert state.output_dir == ""
         assert state.enable_code_execution is True
 
     def test_custom_values(self):
@@ -88,6 +89,23 @@ class TestTeamConfig:
         assert tc.developer.llm == "ollama/llama3"
         assert tc.developer.count == 2
         assert tc.product_owner.llm == "openai/gpt-4o"
+
+
+class TestAgentConfigCreateLlm:
+    def test_returns_llm_without_base_url(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test")
+        cfg = AgentConfig(llm="openai/gpt-4o")
+        result = cfg.create_llm()
+        assert not isinstance(result, str)
+        assert hasattr(result, "model")
+
+    def test_returns_llm_instance_with_base_url(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test")
+
+        cfg = AgentConfig(llm="openai/local-model", base_url="http://host:8000/v1")
+        result = cfg.create_llm()
+        assert not isinstance(result, str)
+        assert hasattr(result, "model")
 
 
 class TestStructuredOutputs:
